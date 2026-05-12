@@ -21,6 +21,7 @@ async function getShoperToken() {
   });
   if (!response.ok) throw new Error(`Shoper auth failed: ${response.status}`);
   const data = await response.json();
+  console.log('Shoper auth response:', JSON.stringify(data));
   return data.token;
 }
 
@@ -65,7 +66,7 @@ app.post('/webhook', async (req, res) => {
 
   try {
     const token = await getShoperToken();
-    console.log('Shoper token obtained');
+    console.log('Shoper token obtained:', token);
     const result = await createBlogPost(token, article);
     console.log('Blog post created, ID:', result.news_id);
     return res.status(200).json({ success: true, news_id: result.news_id });
