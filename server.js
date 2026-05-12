@@ -25,7 +25,7 @@ async function getShoperToken() {
 }
 
 async function createBlogPost(token, article) {
-  const response = await fetch(`https://${SHOPER_URL}/webapi/rest/blogposts`, {
+  const response = await fetch(`https://${SHOPER_URL}/webapi/rest/blog-posts`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
