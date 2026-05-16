@@ -10,8 +10,6 @@ const SHOPER_URL = process.env.SHOPER_URL;
 const SHOPER_LOGIN = process.env.SHOPER_LOGIN;
 const SHOPER_PASSWORD = process.env.SHOPER_PASSWORD;
 
-// ---------- Shoper auth ----------
-
 async function getShoperToken() {
   const credentials = Buffer.from(`${SHOPER_LOGIN}:${SHOPER_PASSWORD}`).toString('base64');
   const response = await fetch(`https://${SHOPER_URL}/webapi/rest/auth`, {
@@ -26,8 +24,6 @@ async function getShoperToken() {
   return data.access_token;
 }
 
-// ---------- helpers ----------
-
 function slugify(text) {
   return text
     .toLowerCase()
@@ -37,34 +33,33 @@ function slugify(text) {
 }
 
 function processContent(html) {
-  if (!html) return '';
+  // Usuń cały blok 
+  html = html.replace(/]*type="application\/ld\+json"[^>]*>[\s\S]*?<\/script>/gi, '');
 
-  // Usuń <script type="application/ld+json">
-  html = html.replace(/<script[^>]*type="application\/ld\+json"[^>]*>[\s\S]*?<\/script>/gi, '');
+  // Usuń pierwsze wystąpienie  (hero image które jest w treści)
+  html = html.replace(/]*>/i, '');
 
-  // Usuń pierwsze <img> (hero image - trafi jako miniaturka)
-  html = html.replace(/<img[^>]*>/i, '');
+  // Usuń znaczniki , , , 
 
-  // Wyczyść szkielet HTML - zostaw tylko treść
-  html = html.replace(/<!DOCTYPE[^>]*>/gi, '');
-  html = html.replace(/<html[^>]*>/gi, '');
+,  itp.
+  html = html.replace(/]*>/gi, '');
+  html = html.replace(/]*>/gi, '');
   html = html.replace(/<\/html>/gi, '');
-  html = html.replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '');
-  html = html.replace(/<body[^>]*>/gi, '');
+  html = html.replace(/]*>[\s\S]*?<\/head>/gi, '');
+  html = html.replace(/]*>/gi, '');
   html = html.replace(/<\/body>/gi, '');
-  html = html.replace(/<article[^>]*>/gi, '');
+  html = html.replace(/]*>/gi, '');
   html = html.replace(/<\/article>/gi, '');
 
   // Styluj tabelki
-  html = html.replace(/<table(?:[^>]*)>/gi,
-    '<table style="width:100%; border-collapse:collapse; border:1px solid #ddd;">');
-  html = html.replace(/(<thead>[\s\S]*?<\/thead>)/gi, (block) =>
-    block.replace(/<tr(?:[^>]*)>/gi, '<tr style="background-color:#f8f8f8;">')
-  );
-  html = html.replace(/<th(?:[^>]*)>/gi,
-    '<th style="padding:12px; text-align:left; border:1px solid #ddd;">');
-  html = html.replace(/<td(?:[^>]*)>/gi,
-    '<td style="padding:12px; border:1px solid #ddd; vertical-align:top;">');
+  html = html.replace(/]*style)[^>]*>/g, '');
+  html = html.replace(/([\s\S]*?)<\/thead>/g, (match, inner) => {
+    const styledInner = inner.replace(/]*style)[^>]*>/g, '');
+    return `${styledInner}`;
+  });
+  html = html.replace(/]*style)[^>]*>/g, '
+');
+  html = html.replace(/]*style)[^>]*>/g, '	');
 
   // Usuń nadmiarowe białe znaki
   html = html.replace(/\n{3,}/g, '\n\n').trim();
@@ -72,21 +67,17 @@ function processContent(html) {
   return html;
 }
 
-// ---------- upload zdjęcia jako miniaturka wpisu ----------
-
-async function uploadHeroImage(token, newsId, imageUrl) {
+async function uploadImageToShoper(token, newsId, imageUrl) {
   try {
-    console.log('[IMAGE] Fetching:', imageUrl);
     const imgResponse = await fetch(imageUrl);
-    if (!imgResponse.ok) throw new Error(`Fetch failed: ${imgResponse.status}`);
+    if (!imgResponse.ok) throw new Error(`Failed to fetch image: ${imgResponse.status}`);
 
     const imgBuffer = await imgResponse.buffer();
     const base64 = imgBuffer.toString('base64');
-    const ext = imageUrl.split('.').pop().split('?')[0].toLowerCase().replace(/[^a-z]/g, '') || 'jpg';
+    const ext = imageUrl.split('.').pop().split('?')[0].toLowerCase() || 'jpg';
     const filename = `hero-${newsId}.${ext}`;
 
-    // Shoper news-files: news_id + name (nazwa pliku) + content (base64)
-    const uploadResponse = await fetch(`https://${SHOPER_URL}/webapi/rest/news-files`, {
+    const uploadResponse = await fetch(`https://${SHOPER_URL}/webapi/rest/news-images`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -94,26 +85,18 @@ async function uploadHeroImage(token, newsId, imageUrl) {
       },
       body: JSON.stringify({
         news_id: String(newsId),
-        name: filename,
-        content: base64
+        image: base64,
+        filename: filename
       })
     });
 
     const uploadText = await uploadResponse.text();
-    console.log(`[IMAGE] Upload ${uploadResponse.status}:`, uploadText);
-
-    if (!uploadResponse.ok) {
-      throw new Error(`Upload failed: ${uploadResponse.status} - ${uploadText}`);
-    }
-
-    console.log('[IMAGE] ✓ Hero image uploaded successfully');
+    console.log(`[SHOPER] Image upload ${uploadResponse.status}:`, uploadText);
   } catch (err) {
-    // Artykuł zostaje zapisany nawet jeśli zdjęcie nie wgra się
-    console.error('[IMAGE] Error:', err.message);
+    console.error('[SHOPER] Image upload error:', err.message);
+    // Nie rzucamy błędu — artykuł zostaje zapisany nawet bez zdjęcia
   }
 }
-
-// ---------- tworzenie wpisu blogowego ----------
 
 async function createBlogPost(token, article) {
   const slug = article.slug
@@ -123,13 +106,16 @@ async function createBlogPost(token, article) {
   const content = processContent(article.content_html || '');
 
   const payload = {
-    active: '0',                    // szkic - publikujesz ręcznie
-    lang_id: '1',                   // polski
-    category_id: '4',               // Blog o kawie
+    active: '0',
+    lang_id: '1',
+    news_category_id: '4',
     author: 'Magnificent Coffee',
     name: article.title || 'Bez tytułu',
     content: content,
-    short_content: article.metaDescription ? `<p>${article.metaDescription}</p>` : '',
+    short_content: article.metaDescription ? `
+${article.metaDescription}
+
+` : '',
     seo_title: article.title || '',
     seo_description: article.metaDescription || '',
     seo_url: slug
@@ -154,34 +140,28 @@ async function createBlogPost(token, article) {
   return responseText.trim();
 }
 
-// ---------- webhook ----------
-
 app.post('/webhook', async (req, res) => {
   const authHeader = req.headers['authorization'] || '';
   const expectedAuth = `Bearer ${BABYLOVE_SECRET}`;
 
   if (!authHeader || authHeader !== expectedAuth) {
-    console.log('[WEBHOOK] Unauthorized');
+    console.log('[WEBHOOK] Unauthorized request');
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const article = req.body;
-  console.log(`[WEBHOOK] Received: "${article.title}" (id: ${article.id})`);
+  console.log(`[WEBHOOK] Received article: "${article.title}" (id: ${article.id})`);
 
   try {
     const token = await getShoperToken();
     console.log('[SHOPER] Token obtained');
 
     const newsId = await createBlogPost(token, article);
-    console.log('[SHOPER] Article created, ID:', newsId);
+    console.log('[SHOPER] Article created, news ID:', newsId);
 
-    // Upload hero image jako miniaturka wpisu
-    const imageUrl = article.heroImageUrl;
-    if (imageUrl) {
-      console.log('[IMAGE] Starting upload:', imageUrl);
-      await uploadHeroImage(token, newsId, imageUrl);
-    } else {
-      console.log('[IMAGE] No heroImageUrl in payload');
+    if (article.heroImageUrl) {
+      console.log('[SHOPER] Uploading hero image:', article.heroImageUrl);
+      await uploadImageToShoper(token, newsId, article.heroImageUrl);
     }
 
     return res.status(200).json({ success: true, shoper_news_id: newsId });
@@ -190,8 +170,6 @@ app.post('/webhook', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 });
-
-// ---------- health check ----------
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'BabyLoveGrowth → Shoper webhook running' });
