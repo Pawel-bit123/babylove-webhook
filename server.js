@@ -42,7 +42,7 @@ function processContent(html) {
   // Usuń <script type="application/ld+json">
   html = html.replace(/<script[^>]*type="application\/ld\+json"[^>]*>[\s\S]*?<\/script>/gi, '');
 
-  // Usuń pierwsze <img> (hero image - trafi jako miniaturka)
+  // Usuń pierwsze <img> (hero image - trafi jako miniaturka wpisu)
   html = html.replace(/<img[^>]*>/i, '');
 
   // Wyczyść szkielet HTML - zostaw tylko treść
@@ -72,7 +72,7 @@ function processContent(html) {
   return html;
 }
 
-// ---------- upload zdjęcia jako miniaturka wpisu ----------
+// ---------- upload miniaturki wpisu ----------
 
 async function uploadHeroImage(token, newsId, imageUrl) {
   try {
@@ -82,10 +82,13 @@ async function uploadHeroImage(token, newsId, imageUrl) {
 
     const imgBuffer = await imgResponse.buffer();
     const base64 = imgBuffer.toString('base64');
-    const ext = imageUrl.split('.').pop().split('?')[0].toLowerCase().replace(/[^a-z]/g, '') || 'jpg';
+
+    // Wyciągnij rozszerzenie z URL
+    const ext = (imageUrl.split('.').pop().split('?')[0].toLowerCase().replace(/[^a-z]/g, '') || 'jpg')
+      .replace('jpeg', 'jpeg');
     const filename = `hero-${newsId}.${ext}`;
 
-    // Shoper news-files: news_id + name (nazwa pliku) + content (base64)
+    // news-files: news_id + name + content (base64) = miniaturka wpisu
     const uploadResponse = await fetch(`https://${SHOPER_URL}/webapi/rest/news-files`, {
       method: 'POST',
       headers: {
@@ -106,7 +109,7 @@ async function uploadHeroImage(token, newsId, imageUrl) {
       throw new Error(`Upload failed: ${uploadResponse.status} - ${uploadText}`);
     }
 
-    console.log('[IMAGE] ✓ Hero image uploaded successfully');
+    console.log('[IMAGE] ✓ Miniaturka wgrana poprawnie');
   } catch (err) {
     // Artykuł zostaje zapisany nawet jeśli zdjęcie nie wgra się
     console.error('[IMAGE] Error:', err.message);
@@ -123,9 +126,9 @@ async function createBlogPost(token, article) {
   const content = processContent(article.content_html || '');
 
   const payload = {
-    active: '0',                    // szkic - publikujesz ręcznie
-    lang_id: '1',                   // polski
-    category_id: '4',               // Blog o kawie
+    active: '0',                     // szkic - publikujesz ręcznie
+    lang_id: '1',                    // polski
+    category_id: '4',                // Blog o kawie
     author: 'Magnificent Coffee',
     name: article.title || 'Bez tytułu',
     content: content,
@@ -176,12 +179,11 @@ app.post('/webhook', async (req, res) => {
     console.log('[SHOPER] Article created, ID:', newsId);
 
     // Upload hero image jako miniaturka wpisu
-    const imageUrl = article.heroImageUrl;
-    if (imageUrl) {
-      console.log('[IMAGE] Starting upload:', imageUrl);
-      await uploadHeroImage(token, newsId, imageUrl);
+    if (article.heroImageUrl) {
+      console.log('[IMAGE] Starting upload:', article.heroImageUrl);
+      await uploadHeroImage(token, newsId, article.heroImageUrl);
     } else {
-      console.log('[IMAGE] No heroImageUrl in payload');
+      console.log('[IMAGE] No heroImageUrl in payload - skipping');
     }
 
     return res.status(200).json({ success: true, shoper_news_id: newsId });
