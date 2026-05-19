@@ -133,7 +133,7 @@ async function createBlogPost(token, article) {
   const payload = {
     active: '0',
     lang_id: '1',
-    category_id: '4',
+    news_categories: [4],
     author: 'Magnificent Coffee',
     name: article.title || 'Bez tytułu',
     content: content,
