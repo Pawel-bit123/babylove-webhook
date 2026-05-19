@@ -55,6 +55,15 @@ function processContent(html) {
   html = html.replace(/<article[^>]*>/gi, '');
   html = html.replace(/<\/article>/gi, '');
 
+  // Dekoduj URL-encoded linki wewnętrzne (#spis-tresci, #rozdzial itp.)
+  html = html.replace(/href="#([^"]+)"/gi, (match, anchor) => {
+    try {
+      return `href="#${decodeURIComponent(anchor)}"`;
+    } catch (e) {
+      return match;
+    }
+  });
+
   // Styluj tabelki
   html = html.replace(/<table(?:[^>]*)>/gi,
     '<table style="width:100%; border-collapse:collapse; border:1px solid #ddd;">');
@@ -83,12 +92,9 @@ async function uploadHeroImage(token, newsId, imageUrl) {
     const imgBuffer = await imgResponse.buffer();
     const base64 = imgBuffer.toString('base64');
 
-    // Wyciągnij rozszerzenie z URL
-    const ext = (imageUrl.split('.').pop().split('?')[0].toLowerCase().replace(/[^a-z]/g, '') || 'jpg')
-      .replace('jpeg', 'jpeg');
+    const ext = (imageUrl.split('.').pop().split('?')[0].toLowerCase().replace(/[^a-z]/g, '') || 'jpg');
     const filename = `hero-${newsId}.${ext}`;
 
-    // news-files: news_id + name + content (base64) = miniaturka wpisu
     const uploadResponse = await fetch(`https://${SHOPER_URL}/webapi/rest/news-files`, {
       method: 'POST',
       headers: {
@@ -111,7 +117,6 @@ async function uploadHeroImage(token, newsId, imageUrl) {
 
     console.log('[IMAGE] ✓ Miniaturka wgrana poprawnie');
   } catch (err) {
-    // Artykuł zostaje zapisany nawet jeśli zdjęcie nie wgra się
     console.error('[IMAGE] Error:', err.message);
   }
 }
@@ -126,9 +131,9 @@ async function createBlogPost(token, article) {
   const content = processContent(article.content_html || '');
 
   const payload = {
-    active: '0',                     // szkic - publikujesz ręcznie
-    lang_id: '1',                    // polski
-    category_id: '4',                // Blog o kawie
+    active: '0',
+    lang_id: '1',
+    category_id: '4',
     author: 'Magnificent Coffee',
     name: article.title || 'Bez tytułu',
     content: content,
@@ -178,7 +183,6 @@ app.post('/webhook', async (req, res) => {
     const newsId = await createBlogPost(token, article);
     console.log('[SHOPER] Article created, ID:', newsId);
 
-    // Upload hero image jako miniaturka wpisu
     if (article.heroImageUrl) {
       console.log('[IMAGE] Starting upload:', article.heroImageUrl);
       await uploadHeroImage(token, newsId, article.heroImageUrl);
