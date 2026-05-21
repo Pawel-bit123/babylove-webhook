@@ -42,7 +42,7 @@ function processContent(html) {
   // Usuń <script type="application/ld+json">
   html = html.replace(/<script[^>]*type="application\/ld\+json"[^>]*>[\s\S]*?<\/script>/gi, '');
 
-  // Usuń pierwsze <img> (hero image - trafi jako miniaturka wpisu)
+  // Usuń pierwsze <img> (hero image - dodawane ręcznie przez panel)
   html = html.replace(/<img[^>]*>/i, '');
 
   // Wyczyść szkielet HTML - zostaw tylko treść
@@ -79,46 +79,6 @@ function processContent(html) {
   html = html.replace(/\n{3,}/g, '\n\n').trim();
 
   return html;
-}
-
-// ---------- upload miniaturki wpisu ----------
-
-async function uploadHeroImage(token, newsId, imageUrl) {
-  try {
-    console.log('[IMAGE] Fetching:', imageUrl);
-    const imgResponse = await fetch(imageUrl);
-    if (!imgResponse.ok) throw new Error(`Fetch failed: ${imgResponse.status}`);
-
-    const imgBuffer = await imgResponse.buffer();
-    const base64 = imgBuffer.toString('base64');
-
-    const ext = (imageUrl.split('.').pop().split('?')[0].toLowerCase().replace(/[^a-z]/g, '') || 'jpg');
-    const filename = `hero-${newsId}.${ext}`;
-
-    const uploadResponse = await fetch(`https://${SHOPER_URL}/webapi/rest/news-files`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        news_id: String(newsId),
-        name: filename,
-        content: base64
-      })
-    });
-
-    const uploadText = await uploadResponse.text();
-    console.log(`[IMAGE] Upload ${uploadResponse.status}:`, uploadText);
-
-    if (!uploadResponse.ok) {
-      throw new Error(`Upload failed: ${uploadResponse.status} - ${uploadText}`);
-    }
-
-    console.log('[IMAGE] ✓ Miniaturka wgrana poprawnie');
-  } catch (err) {
-    console.error('[IMAGE] Error:', err.message);
-  }
 }
 
 // ---------- tworzenie wpisu blogowego ----------
@@ -182,13 +142,6 @@ app.post('/webhook', async (req, res) => {
 
     const newsId = await createBlogPost(token, article);
     console.log('[SHOPER] Article created, ID:', newsId);
-
-    if (article.heroImageUrl) {
-      console.log('[IMAGE] Starting upload:', article.heroImageUrl);
-      await uploadHeroImage(token, newsId, article.heroImageUrl);
-    } else {
-      console.log('[IMAGE] No heroImageUrl in payload - skipping');
-    }
 
     return res.status(200).json({ success: true, shoper_news_id: newsId });
   } catch (error) {
