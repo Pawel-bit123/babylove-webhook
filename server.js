@@ -9,6 +9,7 @@ const BABYLOVE_SECRET = process.env.BABYLOVE_SECRET;
 const SHOPER_URL = process.env.SHOPER_URL;
 const SHOPER_LOGIN = process.env.SHOPER_LOGIN;
 const SHOPER_PASSWORD = process.env.SHOPER_PASSWORD;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // ---------- Shoper auth ----------
 
@@ -34,6 +35,68 @@ function slugify(text) {
     .replace(/[ąćęłńóśźż]/g, c => ({ ą:'a',ć:'c',ę:'e',ł:'l',ń:'n',ó:'o',ś:'s',ź:'z',ż:'z' })[c] || c)
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+// ---------- korekta ortograficzna przez OpenAI ----------
+
+async function correctWithOpenAI(html) {
+  if (!OPENAI_API_KEY) {
+    console.log('[OPENAI] Brak klucza API - pomijam korektę');
+    return html;
+  }
+
+  try {
+    console.log('[OPENAI] Rozpoczynam korektę ortograficzną...');
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0,
+        messages: [
+          {
+            role: 'system',
+            content: `Jesteś korektorem języka polskiego. Poprawiasz błędy ortograficzne i gramatyczne w tekście HTML.
+Zasady:
+- Poprawiaj TYLKO błędy ortograficzne i gramatyczne (literówki, błędna odmiana, brak polskich znaków itp.)
+- NIE zmieniaj struktury HTML, tagów, atrybutów, linków, klas CSS
+- NIE zmieniaj treści merytorycznej ani stylu pisania
+- NIE dodawaj ani nie usuwaj żadnych zdań
+- Zwróć TYLKO poprawiony HTML, bez żadnych komentarzy ani wyjaśnień`
+          },
+          {
+            role: 'user',
+            content: html
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.warn('[OPENAI] API error:', response.status, err, '- pomijam korektę');
+      return html;
+    }
+
+    const data = await response.json();
+    const corrected = data.choices?.[0]?.message?.content?.trim();
+
+    if (!corrected) {
+      console.warn('[OPENAI] Pusta odpowiedź - pomijam korektę');
+      return html;
+    }
+
+    console.log('[OPENAI] ✓ Korekta zakończona');
+    return corrected;
+
+  } catch (err) {
+    console.warn('[OPENAI] Błąd:', err.message, '- pomijam korektę');
+    return html;
+  }
 }
 
 // ---------- processContent ----------
@@ -93,7 +156,11 @@ async function createBlogPost(token, article) {
     ? `blog/wpis/${article.slug}`
     : `blog/wpis/${slugify(article.title || 'artykul')}`;
 
-  const content = processContent(article.content_html || '');
+  // Przetwórz HTML (czyści strukturę, zamienia TL;DR itp.)
+  let content = processContent(article.content_html || '');
+
+  // Korekta ortograficzna przez OpenAI
+  content = await correctWithOpenAI(content);
 
   const payload = {
     active: '0',
