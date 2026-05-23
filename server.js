@@ -36,6 +36,8 @@ function slugify(text) {
     .replace(/^-+|-+$/g, '');
 }
 
+// ---------- processContent ----------
+
 function processContent(html) {
   if (!html) return '';
 
@@ -54,6 +56,9 @@ function processContent(html) {
   html = html.replace(/<\/body>/gi, '');
   html = html.replace(/<article[^>]*>/gi, '');
   html = html.replace(/<\/article>/gi, '');
+
+  // Zamień TL;DR na "W skrócie" (wszystkie warianty: TL;DR, TL:DR, tl;dr itp.)
+  html = html.replace(/\bTL[;:]\s*DR\b/gi, 'W skrócie');
 
   // Dekoduj URL-encoded linki wewnętrzne (#spis-tresci, #rozdzial itp.)
   html = html.replace(/href="#([^"]+)"/gi, (match, anchor) => {
