@@ -37,6 +37,89 @@ function slugify(text) {
     .replace(/^-+|-+$/g, '');
 }
 
+// ---------- walidacja linków ----------
+
+async function checkUrl(url) {
+  // Pomijaj linki wewnętrzne (kotwice i ścieżki względne)
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return true;
+
+  try {
+    const response = await fetch(url, {
+      method: 'HEAD',
+      timeout: 8000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; LinkChecker/1.0)'
+      },
+      redirect: 'follow'
+    });
+
+    const status = response.status;
+
+    // OK: 200, 301, 302, inne 2xx i 3xx
+    if (status < 400) return true;
+
+    // Usuń: 403, 404, 410, 5xx
+    console.log(`[LINKS] Usuwam link (HTTP ${status}): ${url}`);
+    return false;
+
+  } catch (err) {
+    // Błąd połączenia - link martwy
+    console.log(`[LINKS] Usuwam link (błąd połączenia): ${url} - ${err.message}`);
+    return false;
+  }
+}
+
+async function validateLinks(html) {
+  // Znajdź wszystkie linki <a href="...">
+  const linkRegex = /<a\s+([^>]*?)href="([^"#][^"]*)"([^>]*)>([\s\S]*?)<\/a>/gi;
+  const links = [];
+  let match;
+
+  while ((match = linkRegex.exec(html)) !== null) {
+    const url = match[2];
+    // Pomijaj linki wewnętrzne do magnificentcoffee.pl
+    if (url.includes('magnificentcoffee.pl')) continue;
+    links.push({ full: match[0], url, before: match[1], after: match[3], text: match[4] });
+  }
+
+  if (links.length === 0) {
+    console.log('[LINKS] Brak zewnętrznych linków do sprawdzenia');
+    return html;
+  }
+
+  console.log(`[LINKS] Sprawdzam ${links.length} zewnętrznych linków...`);
+
+  // Sprawdź wszystkie linki równolegle (max 5 na raz)
+  const batchSize = 5;
+  const results = new Map();
+
+  for (let i = 0; i < links.length; i += batchSize) {
+    const batch = links.slice(i, i + batchSize);
+    const checks = await Promise.all(
+      batch.map(async link => ({
+        url: link.url,
+        ok: await checkUrl(link.url)
+      }))
+    );
+    checks.forEach(r => results.set(r.url, r.ok));
+  }
+
+  // Usuń martwe linki - zostaw sam tekst
+  let result = html;
+  for (const link of links) {
+    const ok = results.get(link.url);
+    if (!ok) {
+      // Zamień <a href="...">tekst</a> na sam tekst
+      result = result.replace(link.full, link.text);
+    }
+  }
+
+  const removed = [...results.values()].filter(v => !v).length;
+  console.log(`[LINKS] Usunięto ${removed} martwych linków z ${links.length} sprawdzonych`);
+
+  return result;
+}
+
 // ---------- korekta ortograficzna przez OpenAI ----------
 
 async function correctWithOpenAI(html) {
@@ -120,7 +203,7 @@ function processContent(html) {
   html = html.replace(/<article[^>]*>/gi, '');
   html = html.replace(/<\/article>/gi, '');
 
-  // Zamień TL;DR na "W skrócie" (wszystkie warianty: TL;DR, TL:DR, tl;dr itp.)
+  // Zamień TL;DR na "W skrócie" (wszystkie warianty)
   html = html.replace(/\bTL[;:]\s*DR\b/gi, 'W skrócie');
 
   // Dekoduj URL-encoded linki wewnętrzne (#spis-tresci, #rozdzial itp.)
@@ -156,10 +239,13 @@ async function createBlogPost(token, article) {
     ? `blog/wpis/${article.slug}`
     : `blog/wpis/${slugify(article.title || 'artykul')}`;
 
-  // Przetwórz HTML (czyści strukturę, zamienia TL;DR itp.)
+  // 1. Wyczyść HTML
   let content = processContent(article.content_html || '');
 
-  // Korekta ortograficzna przez OpenAI
+  // 2. Sprawdź i usuń martwe linki
+  content = await validateLinks(content);
+
+  // 3. Korekta ortograficzna przez OpenAI
   content = await correctWithOpenAI(content);
 
   const payload = {
