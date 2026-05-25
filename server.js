@@ -40,83 +40,67 @@ function slugify(text) {
 // ---------- walidacja linków ----------
 
 async function checkUrl(url) {
-  // Pomijaj linki wewnętrzne (kotwice i ścieżki względne)
   if (!url.startsWith('http://') && !url.startsWith('https://')) return true;
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
     const response = await fetch(url, {
       method: 'HEAD',
-      timeout: 8000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; LinkChecker/1.0)'
-      },
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LinkChecker/1.0)' },
       redirect: 'follow'
     });
+    clearTimeout(timeout);
 
-    const status = response.status;
-
-    // OK: 200, 301, 302, inne 2xx i 3xx
-    if (status < 400) return true;
-
-    // Usuń: 403, 404, 410, 5xx
-    console.log(`[LINKS] Usuwam link (HTTP ${status}): ${url}`);
+    if (response.status < 400) return true;
+    console.log(`[LINKS] Usuwam link (HTTP ${response.status}): ${url}`);
     return false;
 
   } catch (err) {
-    // Błąd połączenia - link martwy
-    console.log(`[LINKS] Usuwam link (błąd połączenia): ${url} - ${err.message}`);
+    console.log(`[LINKS] Usuwam link (błąd): ${url} - ${err.message}`);
     return false;
   }
 }
 
 async function validateLinks(html) {
-  // Znajdź wszystkie linki <a href="...">
-  const linkRegex = /<a\s+([^>]*?)href="([^"#][^"]*)"([^>]*)>([\s\S]*?)<\/a>/gi;
+  const linkRegex = /<a\s+[^>]*?href="([^"#][^"]*)"[^>]*>[\s\S]*?<\/a>/gi;
   const links = [];
   let match;
 
   while ((match = linkRegex.exec(html)) !== null) {
-    const url = match[2];
-    // Pomijaj linki wewnętrzne do magnificentcoffee.pl
+    const url = match[1];
     if (url.includes('magnificentcoffee.pl')) continue;
-    links.push({ full: match[0], url, before: match[1], after: match[3], text: match[4] });
+    if (!links.find(l => l.url === url)) {
+      links.push({ url });
+    }
   }
 
   if (links.length === 0) {
-    console.log('[LINKS] Brak zewnętrznych linków do sprawdzenia');
+    console.log('[LINKS] Brak zewnętrznych linków');
     return html;
   }
 
-  console.log(`[LINKS] Sprawdzam ${links.length} zewnętrznych linków...`);
+  console.log(`[LINKS] Sprawdzam ${links.length} linków...`);
 
-  // Sprawdź wszystkie linki równolegle (max 5 na raz)
-  const batchSize = 5;
-  const results = new Map();
-
-  for (let i = 0; i < links.length; i += batchSize) {
-    const batch = links.slice(i, i + batchSize);
-    const checks = await Promise.all(
-      batch.map(async link => ({
-        url: link.url,
-        ok: await checkUrl(link.url)
-      }))
-    );
-    checks.forEach(r => results.set(r.url, r.ok));
-  }
+  // Sprawdź wszystkie równolegle
+  const checks = await Promise.all(
+    links.map(async l => ({ url: l.url, ok: await checkUrl(l.url) }))
+  );
+  const results = new Map(checks.map(c => [c.url, c.ok]));
 
   // Usuń martwe linki - zostaw sam tekst
   let result = html;
-  for (const link of links) {
-    const ok = results.get(link.url);
+  for (const [url, ok] of results) {
     if (!ok) {
-      // Zamień <a href="...">tekst</a> na sam tekst
-      result = result.replace(link.full, link.text);
+      const re = new RegExp(`<a\\s+[^>]*?href="${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>([\\s\\S]*?)<\\/a>`, 'gi');
+      result = result.replace(re, '$1');
     }
   }
 
   const removed = [...results.values()].filter(v => !v).length;
-  console.log(`[LINKS] Usunięto ${removed} martwych linków z ${links.length} sprawdzonych`);
-
+  console.log(`[LINKS] Usunięto ${removed}/${links.length} martwych linków`);
   return result;
 }
 
@@ -124,12 +108,12 @@ async function validateLinks(html) {
 
 async function correctWithOpenAI(html) {
   if (!OPENAI_API_KEY) {
-    console.log('[OPENAI] Brak klucza API - pomijam korektę');
+    console.log('[OPENAI] Brak klucza - pomijam');
     return html;
   }
 
   try {
-    console.log('[OPENAI] Rozpoczynam korektę ortograficzną...');
+    console.log('[OPENAI] Korekta ortograficzna...');
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -151,33 +135,25 @@ Zasady:
 - NIE dodawaj ani nie usuwaj żadnych zdań
 - Zwróć TYLKO poprawiony HTML, bez żadnych komentarzy ani wyjaśnień`
           },
-          {
-            role: 'user',
-            content: html
-          }
+          { role: 'user', content: html }
         ]
       })
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      console.warn('[OPENAI] API error:', response.status, err, '- pomijam korektę');
+      console.warn('[OPENAI] Error:', response.status, '- pomijam');
       return html;
     }
 
     const data = await response.json();
     const corrected = data.choices?.[0]?.message?.content?.trim();
-
-    if (!corrected) {
-      console.warn('[OPENAI] Pusta odpowiedź - pomijam korektę');
-      return html;
-    }
+    if (!corrected) return html;
 
     console.log('[OPENAI] ✓ Korekta zakończona');
     return corrected;
 
   } catch (err) {
-    console.warn('[OPENAI] Błąd:', err.message, '- pomijam korektę');
+    console.warn('[OPENAI] Błąd:', err.message, '- pomijam');
     return html;
   }
 }
@@ -187,13 +163,8 @@ Zasady:
 function processContent(html) {
   if (!html) return '';
 
-  // Usuń <script type="application/ld+json">
   html = html.replace(/<script[^>]*type="application\/ld\+json"[^>]*>[\s\S]*?<\/script>/gi, '');
-
-  // Usuń pierwsze <img> (hero image - dodawane ręcznie przez panel)
   html = html.replace(/<img[^>]*>/i, '');
-
-  // Wyczyść szkielet HTML - zostaw tylko treść
   html = html.replace(/<!DOCTYPE[^>]*>/gi, '');
   html = html.replace(/<html[^>]*>/gi, '');
   html = html.replace(/<\/html>/gi, '');
@@ -203,86 +174,76 @@ function processContent(html) {
   html = html.replace(/<article[^>]*>/gi, '');
   html = html.replace(/<\/article>/gi, '');
 
-  // Zamień TL;DR na "W skrócie" (wszystkie warianty)
+  // TL;DR → W skrócie
   html = html.replace(/\bTL[;:]\s*DR\b/gi, 'W skrócie');
 
-  // Dekoduj URL-encoded linki wewnętrzne (#spis-tresci, #rozdzial itp.)
+  // Dekoduj kotwice
   html = html.replace(/href="#([^"]+)"/gi, (match, anchor) => {
-    try {
-      return `href="#${decodeURIComponent(anchor)}"`;
-    } catch (e) {
-      return match;
-    }
+    try { return `href="#${decodeURIComponent(anchor)}"`; }
+    catch (e) { return match; }
   });
 
   // Styluj tabelki
-  html = html.replace(/<table(?:[^>]*)>/gi,
-    '<table style="width:100%; border-collapse:collapse; border:1px solid #ddd;">');
-  html = html.replace(/(<thead>[\s\S]*?<\/thead>)/gi, (block) =>
-    block.replace(/<tr(?:[^>]*)>/gi, '<tr style="background-color:#f8f8f8;">')
-  );
-  html = html.replace(/<th(?:[^>]*)>/gi,
-    '<th style="padding:12px; text-align:left; border:1px solid #ddd;">');
-  html = html.replace(/<td(?:[^>]*)>/gi,
-    '<td style="padding:12px; border:1px solid #ddd; vertical-align:top;">');
+  html = html.replace(/<table(?:[^>]*)>/gi, '<table style="width:100%; border-collapse:collapse; border:1px solid #ddd;">');
+  html = html.replace(/(<thead>[\s\S]*?<\/thead>)/gi, block =>
+    block.replace(/<tr(?:[^>]*)>/gi, '<tr style="background-color:#f8f8f8;">'));
+  html = html.replace(/<th(?:[^>]*)>/gi, '<th style="padding:12px; text-align:left; border:1px solid #ddd;">');
+  html = html.replace(/<td(?:[^>]*)>/gi, '<td style="padding:12px; border:1px solid #ddd; vertical-align:top;">');
 
-  // Usuń nadmiarowe białe znaki
   html = html.replace(/\n{3,}/g, '\n\n').trim();
-
   return html;
 }
 
-// ---------- tworzenie wpisu blogowego ----------
+// ---------- przetwarzanie w tle ----------
 
-async function createBlogPost(token, article) {
-  const slug = article.slug
-    ? `blog/wpis/${article.slug}`
-    : `blog/wpis/${slugify(article.title || 'artykul')}`;
+async function processArticle(article) {
+  try {
+    const token = await getShoperToken();
+    console.log('[SHOPER] Token obtained');
 
-  // 1. Wyczyść HTML
-  let content = processContent(article.content_html || '');
+    const slug = article.slug
+      ? `blog/wpis/${article.slug}`
+      : `blog/wpis/${slugify(article.title || 'artykul')}`;
 
-  // 2. Sprawdź i usuń martwe linki
-  content = await validateLinks(content);
+    let content = processContent(article.content_html || '');
+    content = await validateLinks(content);
+    content = await correctWithOpenAI(content);
 
-  // 3. Korekta ortograficzna przez OpenAI
-  content = await correctWithOpenAI(content);
+    const payload = {
+      active: '0',
+      lang_id: '1',
+      news_categories: [4],
+      author: 'Magnificent Coffee',
+      name: article.title || 'Bez tytułu',
+      content: content,
+      short_content: article.metaDescription ? `<p>${article.metaDescription}</p>` : '',
+      seo_title: article.title || '',
+      seo_description: article.metaDescription || '',
+      seo_url: slug
+    };
 
-  const payload = {
-    active: '0',
-    lang_id: '1',
-    news_categories: [4],
-    author: 'Magnificent Coffee',
-    name: article.title || 'Bez tytułu',
-    content: content,
-    short_content: article.metaDescription ? `<p>${article.metaDescription}</p>` : '',
-    seo_title: article.title || '',
-    seo_description: article.metaDescription || '',
-    seo_url: slug
-  };
+    const response = await fetch(`https://${SHOPER_URL}/webapi/rest/news`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
 
-  const response = await fetch(`https://${SHOPER_URL}/webapi/rest/news`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
+    const responseText = await response.text();
+    if (!response.ok) throw new Error(`Shoper news failed: ${response.status} - ${responseText}`);
 
-  const responseText = await response.text();
-  console.log(`[SHOPER] Response ${response.status}:`, responseText);
+    console.log(`[SHOPER] ✓ Artykuł zapisany, ID: ${responseText.trim()}`);
 
-  if (!response.ok) {
-    throw new Error(`Shoper news failed: ${response.status} - ${responseText}`);
+  } catch (err) {
+    console.error('[ERROR] Przetwarzanie nie powiodło się:', err.message);
   }
-
-  return responseText.trim();
 }
 
 // ---------- webhook ----------
 
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', (req, res) => {
   const authHeader = req.headers['authorization'] || '';
   const expectedAuth = `Bearer ${BABYLOVE_SECRET}`;
 
@@ -294,18 +255,11 @@ app.post('/webhook', async (req, res) => {
   const article = req.body;
   console.log(`[WEBHOOK] Received: "${article.title}" (id: ${article.id})`);
 
-  try {
-    const token = await getShoperToken();
-    console.log('[SHOPER] Token obtained');
+  // Odpowiedz od razu - przetwarzanie idzie w tle
+  res.status(200).json({ success: true, message: 'Accepted, processing in background' });
 
-    const newsId = await createBlogPost(token, article);
-    console.log('[SHOPER] Article created, ID:', newsId);
-
-    return res.status(200).json({ success: true, shoper_news_id: newsId });
-  } catch (error) {
-    console.error('[ERROR]', error.message);
-    return res.status(500).json({ error: error.message });
-  }
+  // Przetwarzaj asynchronicznie
+  processArticle(article);
 });
 
 // ---------- health check ----------
