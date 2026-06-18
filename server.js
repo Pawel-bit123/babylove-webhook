@@ -177,6 +177,21 @@ function processContent(html) {
   // TL;DR → W skrócie
   html = html.replace(/\bTL[;:]\s*DR\b/gi, 'W skrócie');
 
+  // Owij grafikę MagnificentCoffee linkiem do strony głównej
+  html = html.replace(
+    /(<img\s[^>]*alt="https:\/\/magnificentcoffee\.pl"[^>]*>)/gi,
+    '<a href="https://magnificentcoffee.pl" target="_blank" rel="noopener">$1</a>'
+  );
+
+  // Dodaj czarny przycisk CTA "Zamów teraz" przed sekcją FAQ
+  const ctaButton = '<p style="text-align:center; margin:28px 0;">' +
+    '<a href="https://magnificentcoffee.pl" target="_blank" rel="noopener" ' +
+    'style="display:inline-block; background-color:#000000; color:#ffffff; ' +
+    'padding:14px 36px; border-radius:4px; text-decoration:none; ' +
+    'font-weight:bold; font-size:16px; letter-spacing:0.5px;">Zamów teraz \u2192</a>' +
+    '</p>';
+  html = html.replace(/(<h2\s[^>]*id="faq")/i, ctaButton + '$1');
+
   // Dekoduj kotwice
   html = html.replace(/href="#([^"]+)"/gi, (match, anchor) => {
     try { return `href="#${decodeURIComponent(anchor)}"`; }
