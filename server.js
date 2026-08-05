@@ -238,6 +238,7 @@ async function processArticle(article) {
 
     const payload = {
       active: '0',
+      box: '1',
       lang_id: '1',
       news_categories: [4],
       author: 'Magnificent Coffee',
