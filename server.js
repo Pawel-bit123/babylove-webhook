@@ -158,6 +158,36 @@ Zasady:
   }
 }
 
+// ---------- zdjęcie wpisu ----------
+
+// Pierwszy obrazek artykułu to zdjęcie główne. processContent() usuwa go z treści,
+// a tutaj bierzemy jego adres, żeby ustawić go w Shoperze jako "zdjęcie wpisu".
+function extractHeroImageUrl(html) {
+  if (!html) return null;
+  // ta sama kolejność co w processContent(): najpierw bez JSON-LD, potem pierwszy <img>
+  const clean = html.replace(/<script[^>]*type="application\/ld\+json"[^>]*>[\s\S]*?<\/script>/gi, '');
+  const tag = clean.match(/<img[^>]*>/i);
+  if (!tag) return null;
+  const src = tag[0].match(/\ssrc\s*=\s*["']([^"']+)["']/i);
+  if (!src) return null;
+  const url = src[1].replace(/&amp;/g, '&').trim();
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+// Shoper sam pobiera plik spod podanego adresu (pole image_url) i zapisuje go jako zdjęcie wpisu.
+async function setNewsImage(token, newsId, imageUrl) {
+  const url = `https://${SHOPER_URL}/webapi/rest/news/${newsId}`;
+  const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  const put = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({ image_url: imageUrl }) });
+  if (!put.ok) throw new Error(`PUT image_url: ${put.status} - ${await put.text()}`);
+
+  const check = await fetch(url, { headers });
+  const news = await check.json();
+  if (!news.image_file) throw new Error('Shoper nie zapisał zdjęcia (image_file puste)');
+  return news.image_file;
+}
+
 // ---------- processContent ----------
 
 function processContent(html) {
@@ -232,6 +262,7 @@ async function processArticle(article) {
       ? `blog/wpis/${article.slug}`
       : `blog/wpis/${slugify(article.title || 'artykul')}`;
 
+    const heroUrl = extractHeroImageUrl(article.content_html || '');
     let content = processContent(article.content_html || '');
     content = await validateLinks(content);
     content = await correctWithOpenAI(content);
@@ -263,6 +294,21 @@ async function processArticle(article) {
     if (!response.ok) throw new Error(`Shoper news failed: ${response.status} - ${responseText}`);
 
     console.log(`[SHOPER] ✓ Artykuł zapisany, ID: ${responseText.trim()}`);
+
+    // Zdjęcie wpisu - osobny try/catch, błąd tutaj nie cofa zapisanego artykułu
+    const newsId = parseInt(responseText.replace(/[^0-9]/g, ''), 10);
+    if (!heroUrl) {
+      console.log('[IMAGE] Brak pierwszego obrazka w artykule - wpis bez zdjęcia');
+    } else if (!Number.isInteger(newsId)) {
+      console.warn('[IMAGE] Nie rozpoznano ID wpisu - zdjęcie nieustawione');
+    } else {
+      try {
+        const file = await setNewsImage(token, newsId, heroUrl);
+        console.log(`[IMAGE] ✓ Zdjęcie wpisu ustawione: ${file}`);
+      } catch (imgErr) {
+        console.warn(`[IMAGE] Nie udało się ustawić zdjęcia wpisu (${heroUrl}): ${imgErr.message}`);
+      }
+    }
 
   } catch (err) {
     console.error('[ERROR] Przetwarzanie nie powiodło się:', err.message);
