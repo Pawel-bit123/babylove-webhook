@@ -11,6 +11,8 @@ const SHOPER_LOGIN = process.env.SHOPER_LOGIN;
 const SHOPER_PASSWORD = process.env.SHOPER_PASSWORD;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+const NEWS_CATEGORY_ID = 4;   // kategoria bloga "Blog o kawie"
+
 // ---------- Shoper auth ----------
 
 async function getShoperToken() {
@@ -188,6 +190,17 @@ async function setNewsImage(token, newsId, imageUrl) {
   return news.image_file;
 }
 
+// Przypisuje wpis do kategorii bloga. Shoper przyjmuje pole "categories"
+// (pole "news_categories" jest po cichu ignorowane).
+async function setNewsCategory(token, newsId, categoryId) {
+  const put = await fetch(`https://${SHOPER_URL}/webapi/rest/news/${newsId}`, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ categories: [categoryId] })
+  });
+  if (!put.ok) throw new Error(`PUT categories: ${put.status} - ${await put.text()}`);
+}
+
 // ---------- processContent ----------
 
 function processContent(html) {
@@ -271,7 +284,6 @@ async function processArticle(article) {
       active: '0',
       box: '1',
       lang_id: '1',
-      news_categories: [4],
       author: 'Magnificent Coffee',
       name: article.title || 'Bez tytułu',
       content: content,
@@ -297,6 +309,17 @@ async function processArticle(article) {
 
     // Zdjęcie wpisu - osobny try/catch, błąd tutaj nie cofa zapisanego artykułu
     const newsId = parseInt(responseText.replace(/[^0-9]/g, ''), 10);
+
+    // Kategoria - osobnym zapisem, tak jak sprawdzono w API; błąd nie cofa artykułu
+    if (Number.isInteger(newsId)) {
+      try {
+        await setNewsCategory(token, newsId, NEWS_CATEGORY_ID);
+        console.log(`[CATEGORY] ✓ Wpis przypisany do kategorii ${NEWS_CATEGORY_ID}`);
+      } catch (catErr) {
+        console.warn(`[CATEGORY] Nie udało się przypisać kategorii: ${catErr.message}`);
+      }
+    }
+
     if (!heroUrl) {
       console.log('[IMAGE] Brak pierwszego obrazka w artykule - wpis bez zdjęcia');
     } else if (!Number.isInteger(newsId)) {
