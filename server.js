@@ -282,7 +282,7 @@ async function processArticle(article) {
 
     const payload = {
       active: '0',
-      box: '1',
+      box: '0',   // "Moduł" wyłączony - wpis jest widoczny na blogu przez kategorię
       lang_id: '1',
       author: 'Magnificent Coffee',
       name: article.title || 'Bez tytułu',
