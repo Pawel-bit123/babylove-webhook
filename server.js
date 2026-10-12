@@ -41,28 +41,51 @@ function slugify(text) {
 
 // ---------- walidacja linków ----------
 
-async function checkUrl(url) {
-  if (!url.startsWith('http://') && !url.startsWith('https://')) return true;
+// Link usuwamy tylko wtedy, gdy strona wyraźnie mówi, że adres nie istnieje
+// (404/410 albo nieistniejąca domena). Blokada automatycznych zapytań (403, 405, 429),
+// błąd serwera albo przekroczony czas to nie dowód, że link jest martwy -
+// serwisy naukowe i urzędowe często odrzucają automaty, a w przeglądarce działają.
+const DEAD_STATUSES = [404, 410];
 
+async function fetchStatus(url, method) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
     const response = await fetch(url, {
-      method: 'HEAD',
+      method,
       signal: controller.signal,
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LinkChecker/1.0)' },
       redirect: 'follow'
     });
+    return response.status;
+  } finally {
     clearTimeout(timeout);
+    if (method === 'GET') controller.abort();   // status już mamy - nie pobieramy treści strony
+  }
+}
 
-    if (response.status < 400) return true;
-    console.log(`[LINKS] Usuwam link (HTTP ${response.status}): ${url}`);
-    return false;
+async function checkUrl(url) {
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return true;
+
+  try {
+    let status = await fetchStatus(url, 'HEAD');
+    // część serwerów źle odpowiada na HEAD - 404/410 potwierdzamy zwykłym GET
+    if (DEAD_STATUSES.includes(status)) status = await fetchStatus(url, 'GET');
+
+    if (DEAD_STATUSES.includes(status)) {
+      console.log(`[LINKS] Usuwam link (HTTP ${status}): ${url}`);
+      return false;
+    }
+    if (status >= 400) console.log(`[LINKS] Zostawiam link mimo HTTP ${status}: ${url}`);
+    return true;
 
   } catch (err) {
-    console.log(`[LINKS] Usuwam link (błąd): ${url} - ${err.message}`);
-    return false;
+    if (err.code === 'ENOTFOUND') {
+      console.log(`[LINKS] Usuwam link (domena nie istnieje): ${url}`);
+      return false;
+    }
+    console.log(`[LINKS] Zostawiam link mimo błędu sprawdzania: ${url} - ${err.message}`);
+    return true;
   }
 }
 
