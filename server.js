@@ -129,6 +129,18 @@ async function validateLinks(html) {
   return result;
 }
 
+// ---------- znaczniki bloku kodu ----------
+
+// Model czasem otacza odpowiedź blokiem kodu Markdown (```html na początku, ``` na końcu).
+// Bez zdjęcia tych znaczników trafiają one do treści wpisu i są widoczne na blogu.
+function stripCodeFences(html) {
+  if (!html) return html;
+  return html
+    .replace(/^\s*(?:<p>\s*)?```[a-z]*\s*(?:<\/p>)?\s*/i, '')
+    .replace(/\s*(?:<p>\s*)?```\s*(?:<\/p>)?\s*$/i, '')
+    .trim();
+}
+
 // ---------- korekta ortograficzna przez OpenAI ----------
 
 async function correctWithOpenAI(html) {
@@ -158,7 +170,8 @@ Zasady:
 - NIE zmieniaj struktury HTML, tagów, atrybutów, linków, klas CSS
 - NIE zmieniaj treści merytorycznej ani stylu pisania
 - NIE dodawaj ani nie usuwaj żadnych zdań
-- Zwróć TYLKO poprawiony HTML, bez żadnych komentarzy ani wyjaśnień`
+- Zwróć TYLKO poprawiony HTML, bez żadnych komentarzy ani wyjaśnień
+- Nie otaczaj odpowiedzi znacznikami bloku kodu Markdown ani słowem html na początku`
           },
           { role: 'user', content: html }
         ]
@@ -171,7 +184,7 @@ Zasady:
     }
 
     const data = await response.json();
-    const corrected = data.choices?.[0]?.message?.content?.trim();
+    const corrected = stripCodeFences(data.choices?.[0]?.message?.content?.trim());
     if (!corrected) return html;
 
     console.log('[OPENAI] ✓ Korekta zakończona');
@@ -228,6 +241,7 @@ async function setNewsCategory(token, newsId, categoryId) {
 
 function processContent(html) {
   if (!html) return '';
+  html = stripCodeFences(html);
 
   html = html.replace(/<script[^>]*type="application\/ld\+json"[^>]*>[\s\S]*?<\/script>/gi, '');
   html = html.replace(/<img[^>]*>/i, '');
