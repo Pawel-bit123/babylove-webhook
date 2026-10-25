@@ -212,15 +212,29 @@ function extractHeroImageUrl(html) {
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
+// Shoper ogranicza liczbę zapytań API (błąd 429, wspólny limit z innymi automatyzacjami).
+// Zapytania po zapisie artykułu (kategoria, zdjęcie) ponawiamy z rosnącą przerwą, zamiast od razu się poddawać.
+async function shoperFetch(url, options = {}) {
+  const waits = [5, 10, 20, 30, 60];   // sekundy między próbami
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, options);
+    if (res.status !== 429 || attempt >= waits.length) return res;
+    const retryAfter = parseInt(res.headers.get('retry-after') || '', 10);
+    const wait = Number.isInteger(retryAfter) && retryAfter > 0 ? retryAfter : waits[attempt];
+    console.warn(`[SHOPER] Limit zapytań (429) - ponawiam za ${wait} s (próba ${attempt + 2}/${waits.length + 1})`);
+    await new Promise(r => setTimeout(r, wait * 1000));
+  }
+}
+
 // Shoper sam pobiera plik spod podanego adresu (pole image_url) i zapisuje go jako zdjęcie wpisu.
 async function setNewsImage(token, newsId, imageUrl) {
   const url = `https://${SHOPER_URL}/webapi/rest/news/${newsId}`;
   const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const put = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({ image_url: imageUrl }) });
+  const put = await shoperFetch(url, { method: 'PUT', headers, body: JSON.stringify({ image_url: imageUrl }) });
   if (!put.ok) throw new Error(`PUT image_url: ${put.status} - ${await put.text()}`);
 
-  const check = await fetch(url, { headers });
+  const check = await shoperFetch(url, { headers });
   const news = await check.json();
   if (!news.image_file) throw new Error('Shoper nie zapisał zdjęcia (image_file puste)');
   return news.image_file;
@@ -229,7 +243,7 @@ async function setNewsImage(token, newsId, imageUrl) {
 // Przypisuje wpis do kategorii bloga. Shoper przyjmuje pole "categories"
 // (pole "news_categories" jest po cichu ignorowane).
 async function setNewsCategory(token, newsId, categoryId) {
-  const put = await fetch(`https://${SHOPER_URL}/webapi/rest/news/${newsId}`, {
+  const put = await shoperFetch(`https://${SHOPER_URL}/webapi/rest/news/${newsId}`, {
     method: 'PUT',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ categories: [categoryId] })
