@@ -251,6 +251,37 @@ async function setNewsCategory(token, newsId, categoryId) {
   if (!put.ok) throw new Error(`PUT categories: ${put.status} - ${await put.text()}`);
 }
 
+// Republikacja z BabyLove wysyła ten sam adres co przy pierwszej publikacji.
+// Shoper nie filtruje wpisów po seo_url (404), więc przeglądamy listę stronami.
+// Wywoływane tylko po konflikcie adresu, więc nie obciąża limitu API przy nowych wpisach.
+async function findNewsBySeoUrl(token, seoUrl) {
+  const headers = { 'Authorization': `Bearer ${token}` };
+  for (let page = 1; page <= 50; page++) {
+    const res = await shoperFetch(`https://${SHOPER_URL}/webapi/rest/news?limit=50&page=${page}`, { headers });
+    if (!res.ok) throw new Error(`GET news (strona ${page}): ${res.status}`);
+    const data = await res.json();
+    const hit = (data.list || []).find(n => n.seo_url === seoUrl);
+    if (hit) return hit;
+    if (page >= parseInt(data.pages || '1', 10)) return null;
+  }
+  return null;
+}
+
+// Aktualizacja istniejącego wpisu: tylko treść i pola SEO.
+// Stan aktywny, adres, kategoria, data, autor i zdjęcie wpisu zostają bez zmian.
+async function updateExistingNews(token, existing, payload) {
+  const fields = ['name', 'content', 'short_content', 'seo_title', 'seo_description'];
+  const body = Object.fromEntries(fields.map(f => [f, payload[f]]));
+  console.log(`[UPDATE] Wpis ${existing.news_id} już istnieje ("${existing.name}") - aktualizuję treść i SEO`);
+  const put = await shoperFetch(`https://${SHOPER_URL}/webapi/rest/news/${existing.news_id}`, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!put.ok) throw new Error(`PUT news/${existing.news_id}: ${put.status} - ${await put.text()}`);
+  console.log(`[UPDATE] ✓ Wpis ${existing.news_id} zaktualizowany: "${payload.name}" (aktywny: ${existing.active}, zdjęcie bez zmian)`);
+}
+
 // ---------- processContent ----------
 
 function processContent(html) {
@@ -354,6 +385,21 @@ async function processArticle(article) {
     });
 
     const responseText = await response.text();
+
+    // Konflikt adresu = republikacja poprawionego artykułu -> aktualizujemy istniejący wpis
+    if (response.status === 400 && /seo_url/.test(responseText)) {
+      // adres z komunikatu Shopera, np. "...konfliktujący adres URL do 'blog/wpis/x'"
+      let conflictUrl = slug;
+      try {
+        const m = (JSON.parse(responseText).error_description || '').match(/'([^']+)'\s*$/);
+        if (m) conflictUrl = m[1];
+      } catch (e) { /* zostaje slug */ }
+      const existing = await findNewsBySeoUrl(token, conflictUrl);
+      if (!existing) throw new Error(`Konflikt adresu ${slug}, ale nie znaleziono wpisu: ${responseText}`);
+      await updateExistingNews(token, existing, payload);
+      return;
+    }
+
     if (!response.ok) throw new Error(`Shoper news failed: ${response.status} - ${responseText}`);
 
     console.log(`[SHOPER] ✓ Artykuł zapisany, ID: ${responseText.trim()}`);
