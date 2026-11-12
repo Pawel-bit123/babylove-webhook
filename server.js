@@ -315,8 +315,11 @@ function processContent(html) {
     'padding:14px 36px; border-radius:4px; text-decoration:none; ' +
     'font-weight:bold; font-size:16px; letter-spacing:0.5px;">Zamów teraz \u2192</a>' +
     '</p>';
+  // Republikacja z BabyLove poprawia treść, która już ma przycisk - wtedy nie dokładamy drugiego
+  const hadCta = html.includes('Zamów teraz');
+  if (hadCta) console.log('[CTA] Przycisk już jest w treści - nie dodaję drugiego');
   // Łap oba warianty: id="faq" i id="najczesciej-zadawane-pytania" (i podobne)
-  html = html.replace(/(<h2\s[^>]*id="(?:faq|najczesciej[^"]*pytani[^"]*)")/i, ctaButton + '$1');
+  if (!hadCta) html = html.replace(/(<h2\s[^>]*id="(?:faq|najczesciej[^"]*pytani[^"]*)")/i, ctaButton + '$1');
   // Fallback: jeśli żaden z powyższych - wstaw przed ostatnim <h2 (ale nie jeśli już wstawiono)
   if (!html.includes('Zamów teraz')) {
     const lastH2Match = html.match(/[\s\S]*(<h2\s)/i);
